@@ -58,8 +58,8 @@ class DockerComposeRuntimeService:
             compose_project_name=build.compose_project_name,
             database_name=build.database_name,
             host_port=build.host_port,
-            odoo_image=self.settings.odoo_image,
-            postgres_image=self.settings.postgres_image,
+            odoo_image=build.odoo_image or self.settings.odoo_image,
+            postgres_image=build.postgres_image or self.settings.postgres_image,
             repositories=repositories,
             addons_path=addons_path,
         )

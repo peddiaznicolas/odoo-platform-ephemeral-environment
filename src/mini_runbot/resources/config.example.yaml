@@ -3,6 +3,12 @@ database_url: sqlite:///./mini_runbot.db
 builds_root: ./builds
 odoo_image: odoo:16.0
 postgres_image: postgres:15
+# Optional per-build image profiles. A build picks one explicitly (odoo_version) or by ref name;
+# otherwise the global odoo_image/postgres_image above apply.
+# odoo_versions:
+#   "16.0": {odoo_image: odoo:16.0, postgres_image: postgres:15}
+#   "17.0": {odoo_image: odoo:17.0, postgres_image: postgres:15}
+#   "18.0": {odoo_image: odoo:18.0, postgres_image: postgres:16}
 port_start: 18000
 port_end: 19999
 command_timeout_seconds: 900
