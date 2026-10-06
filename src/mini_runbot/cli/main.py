@@ -280,7 +280,7 @@ def serve(
     reload: Annotated[bool, typer.Option("--reload")] = False,
 ) -> None:
     """Serve the API and dashboard from one process."""
-    console.print(f"[bold green]Mini-Runbot[/bold green] → http://{host}:{port}")
+    console.print(f"[bold green]Mini-Runbot[/bold green] at http://{host}:{port}")
     uvicorn.run("mini_runbot.api.app:app", host=host, port=port, reload=reload)
 
 
