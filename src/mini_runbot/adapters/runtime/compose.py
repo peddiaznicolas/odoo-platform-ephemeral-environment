@@ -131,9 +131,7 @@ class DockerComposeRuntimeService:
                 f"SELECT name, state FROM ir_module_module WHERE name IN ({names})",
             ],
         )
-        states = dict(
-            line.split("|", 1) for line in output.splitlines() if line.count("|") == 1
-        )
+        states = dict(line.split("|", 1) for line in output.splitlines() if line.count("|") == 1)
         pending = [
             f"{module} ({states.get(module, 'not found')})"
             for module in modules
@@ -296,9 +294,7 @@ class DockerComposeRuntimeService:
     def _run(self, build: Build, stage: str, arguments: list[str]) -> CommandResult:
         return self._execute(build, stage, arguments)[0]
 
-    def _execute(
-        self, build: Build, stage: str, arguments: list[str]
-    ) -> tuple[CommandResult, str]:
+    def _execute(self, build: Build, stage: str, arguments: list[str]) -> tuple[CommandResult, str]:
         compose_path = self._compose_path(build)
         command = [
             "docker",
