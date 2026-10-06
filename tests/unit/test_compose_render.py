@@ -50,6 +50,7 @@ def test_render_uses_isolated_names_port_and_read_only_mount(tmp_path: Path) -> 
     assert "build_safe" in rendered
     assert "--db_host=db" in rendered
     assert "--database_host" not in rendered
+    assert "--http-interface=0.0.0.0" in rendered
     assert f"{checkout.as_posix()}:/mnt/addons/custom:ro" in rendered.replace("\\\\", "/")
     assert "odoo-data:/var/lib/odoo" in rendered
     assert "/var/run/docker.sock" not in rendered
