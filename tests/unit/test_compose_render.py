@@ -119,14 +119,24 @@ def test_parse_compose_ps_supports_array_and_json_lines() -> None:
 
 
 @pytest.mark.parametrize(
-    ("load_demo_data", "expects_without_demo"),
-    [(True, False), (False, True)],
+    ("series", "load_demo_data", "expected_flag"),
+    [
+        ((16, 0), True, None),
+        ((16, 0), False, "--without-demo=all"),
+        ((18, 0), False, "--without-demo=all"),
+        ((19, 0), True, "--with-demo"),
+        ((19, 0), False, None),
+        ((20, 0), True, "--with-demo"),
+        (None, True, None),
+        (None, False, "--without-demo=all"),
+    ],
 )
-def test_install_demo_data_flag_is_configurable(
+def test_install_demo_data_flag_follows_the_odoo_series(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    series: tuple[int, int] | None,
     load_demo_data: bool,
-    expects_without_demo: bool,
+    expected_flag: str | None,
 ) -> None:
     runtime = DockerComposeRuntimeService(
         Settings(builds_root=tmp_path, load_demo_data=load_demo_data)
@@ -138,6 +148,7 @@ def test_install_demo_data_flag_is_configurable(
         return None
 
     monkeypatch.setattr(runtime, "_run", fake_run)
+    monkeypatch.setattr(runtime, "_odoo_series", lambda build: series)
     build = SimpleNamespace(
         database_name="demo",
         modules=["demo_module"],
@@ -146,4 +157,26 @@ def test_install_demo_data_flag_is_configurable(
 
     runtime.install_modules(build)  # type: ignore[arg-type]
 
-    assert ("--without-demo=all" in captured) is expects_without_demo
+    demo_flags = [item for item in captured if "demo" in item and item.startswith("--")]
+    assert demo_flags == ([expected_flag] if expected_flag else [])
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("Odoo Server 16.0-20250909\n", (16, 0)),
+        ("Odoo Server 20.0-20260926\n", (20, 0)),
+        ("Odoo Server saas~18.2\n", (18, 2)),
+        ("unexpected banner\n", None),
+    ],
+)
+def test_odoo_series_is_parsed_from_the_image_banner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    output: str,
+    expected: tuple[int, int] | None,
+) -> None:
+    runtime = DockerComposeRuntimeService(Settings(builds_root=tmp_path))
+    monkeypatch.setattr(runtime, "_execute", lambda build, stage, arguments: (None, output))
+
+    assert runtime._odoo_series(SimpleNamespace()) == expected  # type: ignore[arg-type]

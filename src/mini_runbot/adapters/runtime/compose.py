@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import urllib.error
@@ -19,6 +20,9 @@ from mini_runbot.config import Settings
 from mini_runbot.domain.errors import RuntimeOperationError
 from mini_runbot.domain.models import Build
 from mini_runbot.ports.services import CommandResult, RuntimeInspection
+
+ODOO_SERIES = re.compile(r"(\d+)\.(\d+)")
+DEMO_OPT_IN_SERIES = (19, 0)
 
 
 class DockerComposeRuntimeService:
@@ -86,8 +90,7 @@ class DockerComposeRuntimeService:
             "-i",
             ",".join(build.modules),
         ]
-        if not self.settings.load_demo_data:
-            arguments.append("--without-demo=all")
+        arguments.extend(self._demo_arguments(self._odoo_series(build)))
         arguments.extend(
             [
                 "--stop-after-init",
@@ -229,7 +232,31 @@ class DockerComposeRuntimeService:
             if result.returncode != 0:
                 raise RuntimeOperationError(f"Compose destruction failed; see {log_path}")
 
+    def _odoo_series(self, build: Build) -> tuple[int, int] | None:
+        """Ask the build image which Odoo series it ships; None when it cannot be read."""
+        try:
+            _, output = self._execute(
+                build,
+                "odoo_version",
+                ["run", "--rm", "--no-deps", "--entrypoint", "odoo", "odoo", "--version"],
+            )
+        except RuntimeOperationError:
+            return None
+        match = ODOO_SERIES.search(output)
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    def _demo_arguments(self, series: tuple[int, int] | None) -> list[str]:
+        # Up to 18.0 demo data loads unless disabled; from 19.0 it loads only on request.
+        if series is not None and series >= DEMO_OPT_IN_SERIES:
+            return ["--with-demo"] if self.settings.load_demo_data else []
+        return [] if self.settings.load_demo_data else ["--without-demo=all"]
+
     def _run(self, build: Build, stage: str, arguments: list[str]) -> CommandResult:
+        return self._execute(build, stage, arguments)[0]
+
+    def _execute(
+        self, build: Build, stage: str, arguments: list[str]
+    ) -> tuple[CommandResult, str]:
         compose_path = self._compose_path(build)
         command = [
             "docker",
@@ -260,12 +287,13 @@ class DockerComposeRuntimeService:
                 exit_code=result.returncode,
                 log_path=str(log_path),
             )
-        return CommandResult(
+        command_result = CommandResult(
             exit_code=result.returncode,
             duration_seconds=time.monotonic() - started,
             log_path=str(log_path),
             summary=f"{stage} completed",
         )
+        return command_result, result.stdout or ""
 
     def _compose_path(self, build: Build) -> Path:
         self._validated_workspace(build.id, build.workspace_path)
