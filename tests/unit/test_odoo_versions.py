@@ -151,3 +151,43 @@ def test_sqlite_persists_images_and_migrates_old_schema(tmp_path: Path) -> None:
     )
     # Re-running schema creation on an existing database must be idempotent.
     SqliteBuildRepository(f"sqlite:///{database}").create_schema()
+
+
+def test_resolve_infers_profile_from_the_leading_ref_segment() -> None:
+    settings = _settings_with_versions()
+    assert settings.resolve_odoo_version(None, "17.0-fix-payment").name == "17.0"
+    assert settings.resolve_odoo_version(None, "18.0/feature").name == "18.0"
+    assert settings.resolve_odoo_version(None, "18.0_mig").name == "18.0"
+    assert settings.resolve_odoo_version(None, "17.01").name == "default"
+    assert settings.resolve_odoo_version(None, "feature/17.0-x").name == "default"
+
+
+def test_resolve_prefers_the_longest_matching_profile() -> None:
+    settings = Settings(
+        odoo_versions={
+            "17.0": OdooVersionConfig("17.0", "odoo:17.0", "postgres:15"),
+            "17.0-ee": OdooVersionConfig("17.0-ee", "registry.local/odoo-ee:17.0", "postgres:15"),
+        }
+    )
+    assert settings.resolve_odoo_version(None, "17.0-ee-fix").name == "17.0-ee"
+    assert settings.resolve_odoo_version(None, "17.0-fix").name == "17.0"
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        {"default": {"odoo_image": "odoo:17.0"}},
+        {"17.0": {"odoo_image": None}},
+        {"17.0": {"odoo_image": "  "}},
+        {"17.0": {"odoo_image": "odoo:17.0", "postgres_image": None}},
+        {"17.0": {"odoo_image": 17}},
+    ],
+)
+def test_config_rejects_reserved_names_and_empty_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, versions: dict[str, object]
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"odoo_versions": versions}), encoding="utf-8")
+    monkeypatch.setenv("MINI_RUNBOT_CONFIG", str(config))
+    with pytest.raises(ConfigurationError):
+        Settings.from_environment()

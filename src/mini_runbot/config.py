@@ -21,6 +21,8 @@ class RepositoryConfig:
 
 
 SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+DEFAULT_VERSION_NAME = "default"
+REF_SEGMENT_SEPARATORS = ("-", "_", "/")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +109,23 @@ class Settings:
             name = str(name)
             if not SAFE_VERSION.fullmatch(name):
                 raise ConfigurationError(f"Invalid odoo_versions entry name: {name}")
+            if name == DEFAULT_VERSION_NAME:
+                raise ConfigurationError(
+                    f"odoo_versions entry name is reserved: {DEFAULT_VERSION_NAME}"
+                )
             if not isinstance(item, dict) or "odoo_image" not in item:
                 raise ConfigurationError(f"Odoo version {name} must define odoo_image")
+            images = {
+                "odoo_image": item["odoo_image"],
+                "postgres_image": item.get("postgres_image", default_postgres_image),
+            }
+            for key, image in images.items():
+                if not isinstance(image, str) or not image.strip():
+                    raise ConfigurationError(f"Odoo version {name} has an empty {key}")
             odoo_versions[name] = OdooVersionConfig(
                 name=name,
-                odoo_image=str(item["odoo_image"]),
-                postgres_image=str(item.get("postgres_image", default_postgres_image)),
+                odoo_image=images["odoo_image"].strip(),
+                postgres_image=images["postgres_image"].strip(),
             )
 
         cleanup_interval_seconds = int(
@@ -165,7 +178,8 @@ class Settings:
         """Pick the image pair for a build.
 
         Explicit request wins; otherwise a profile whose name matches the Git ref
-        is used; otherwise the global odoo_image/postgres_image act as default.
+        is used, exactly or as its leading segment (17.0-fix-payment -> 17.0);
+        otherwise the global odoo_image/postgres_image act as default.
         """
         if requested_version is not None:
             try:
@@ -177,6 +191,16 @@ class Settings:
         inferred = self.odoo_versions.get(requested_ref)
         if inferred is not None:
             return inferred
+        prefixed = [
+            name
+            for name in self.odoo_versions
+            if requested_ref.startswith(name)
+            and requested_ref[len(name) : len(name) + 1] in REF_SEGMENT_SEPARATORS
+        ]
+        if prefixed:
+            return self.odoo_versions[max(prefixed, key=len)]
         return OdooVersionConfig(
-            name="default", odoo_image=self.odoo_image, postgres_image=self.postgres_image
+            name=DEFAULT_VERSION_NAME,
+            odoo_image=self.odoo_image,
+            postgres_image=self.postgres_image,
         )
