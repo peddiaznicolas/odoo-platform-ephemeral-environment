@@ -8,6 +8,7 @@ import pytest
 from mini_runbot.adapters.runtime.compose import DockerComposeRuntimeService
 from mini_runbot.config import Settings
 from mini_runbot.domain.enums import BuildStatus
+from mini_runbot.domain.errors import RuntimeOperationError
 from mini_runbot.domain.models import Build, RepositoryRevision
 
 
@@ -149,6 +150,7 @@ def test_install_demo_data_flag_follows_the_odoo_series(
 
     monkeypatch.setattr(runtime, "_run", fake_run)
     monkeypatch.setattr(runtime, "_odoo_series", lambda build: series)
+    monkeypatch.setattr(runtime, "_verify_installed", lambda build: None)
     build = SimpleNamespace(
         database_name="demo",
         modules=["demo_module"],
@@ -180,3 +182,63 @@ def test_odoo_series_is_parsed_from_the_image_banner(
     monkeypatch.setattr(runtime, "_execute", lambda build, stage, arguments: (None, output))
 
     assert runtime._odoo_series(SimpleNamespace()) == expected  # type: ignore[arg-type]
+
+
+def _verification_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str
+) -> tuple[DockerComposeRuntimeService, list[str]]:
+    runtime = DockerComposeRuntimeService(Settings(builds_root=tmp_path))
+    captured: list[str] = []
+
+    def fake_execute(build, stage: str, arguments: list[str]):
+        captured.extend(arguments)
+        return SimpleNamespace(log_path="install_verify.log"), output
+
+    monkeypatch.setattr(runtime, "_execute", fake_execute)
+    return runtime, captured
+
+
+def test_install_verification_accepts_installed_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, captured = _verification_runtime(
+        tmp_path, monkeypatch, "module_a|installed\nmodule_b|installed\n"
+    )
+    build = SimpleNamespace(database_name="demo", modules=["module_a", "module_b"])
+
+    runtime._verify_installed(build)  # type: ignore[arg-type]
+
+    assert captured[:3] == ["exec", "-T", "db"]
+    assert "'module_a', 'module_b'" in captured[-1]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("module_a|installed\nmodule_b|uninstallable\n", "module_b (uninstallable)"),
+        ("module_a|installed\n", "module_b (not found)"),
+    ],
+)
+def test_install_verification_rejects_skipped_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str, expected: str
+) -> None:
+    runtime, _ = _verification_runtime(tmp_path, monkeypatch, output)
+    build = SimpleNamespace(database_name="demo", modules=["module_a", "module_b"])
+
+    with pytest.raises(RuntimeOperationError, match="not installed") as raised:
+        runtime._verify_installed(build)  # type: ignore[arg-type]
+
+    assert expected in str(raised.value)
+    assert raised.value.log_path == "install_verify.log"
+
+
+def test_install_verification_never_interpolates_unsafe_module_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, captured = _verification_runtime(tmp_path, monkeypatch, "")
+    build = SimpleNamespace(database_name="demo", modules=["module_a'; DROP TABLE x; --"])
+
+    with pytest.raises(RuntimeOperationError, match="cannot be verified"):
+        runtime._verify_installed(build)  # type: ignore[arg-type]
+
+    assert captured == []

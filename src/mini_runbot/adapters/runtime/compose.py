@@ -19,6 +19,7 @@ from jinja2 import (
 from mini_runbot.config import Settings
 from mini_runbot.domain.errors import RuntimeOperationError
 from mini_runbot.domain.models import Build
+from mini_runbot.domain.validation import SAFE_MODULE
 from mini_runbot.ports.services import CommandResult, RuntimeInspection
 
 ODOO_SERIES = re.compile(r"(\d+)\.(\d+)")
@@ -97,11 +98,52 @@ class DockerComposeRuntimeService:
                 f"--addons-path={self._addons_path(build)}",
             ]
         )
-        return self._run(
+        result = self._run(
             build,
             "install",
             arguments,
         )
+        self._verify_installed(build)
+        return result
+
+    def _verify_installed(self, build: Build) -> None:
+        """Odoo exits 0 when it skips a module it cannot install, so read the real state."""
+        modules = [module for module in build.modules if SAFE_MODULE.fullmatch(module)]
+        if len(modules) != len(build.modules):
+            raise RuntimeOperationError("Build contains module names that cannot be verified")
+        names = ", ".join(f"'{module}'" for module in modules)
+        result, output = self._execute(
+            build,
+            "install_verify",
+            [
+                "exec",
+                "-T",
+                "db",
+                "psql",
+                "-U",
+                "odoo",
+                "-d",
+                build.database_name,
+                "-At",
+                "-F",
+                "|",
+                "-c",
+                f"SELECT name, state FROM ir_module_module WHERE name IN ({names})",
+            ],
+        )
+        states = dict(
+            line.split("|", 1) for line in output.splitlines() if line.count("|") == 1
+        )
+        pending = [
+            f"{module} ({states.get(module, 'not found')})"
+            for module in modules
+            if states.get(module) != "installed"
+        ]
+        if pending:
+            raise RuntimeOperationError(
+                f"install left modules not installed: {', '.join(pending)}",
+                log_path=result.log_path,
+            )
 
     def test_modules(self, build: Build) -> CommandResult:
         tags = ",".join(f"/{module}" for module in build.modules)
