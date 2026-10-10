@@ -274,16 +274,18 @@ class DockerComposeRuntimeService:
 
     def _odoo_series(self, build: Build) -> tuple[int, int] | None:
         """Ask the build image which Odoo series it ships; None when it cannot be read."""
-        try:
-            _, output = self._execute(
-                build,
-                "odoo_version",
-                ["run", "--rm", "--no-deps", "--entrypoint", "odoo", "odoo", "--version"],
-            )
-        except RuntimeOperationError:
-            return None
+        result, output = self._execute(
+            build,
+            "odoo_version",
+            ["run", "--rm", "--no-deps", "--entrypoint", "odoo", "odoo", "--version"],
+        )
         match = ODOO_SERIES.search(output)
-        return (int(match.group(1)), int(match.group(2))) if match else None
+        if match is None:
+            raise RuntimeOperationError(
+                "Could not determine the Odoo series from the image banner",
+                log_path=result.log_path,
+            )
+        return (int(match.group(1)), int(match.group(2)))
 
     def _demo_arguments(self, series: tuple[int, int] | None) -> list[str]:
         # Up to 18.0 demo data loads unless disabled; from 19.0 it loads only on request.
